@@ -1,0 +1,100 @@
+SchemaVersion: 2018-07-01
+Owner: "@mongodb/product-perf"
+Description: |
+  This workload compares performance of queries that use a shard key
+  and queries that do not use a shard key on a ~1GiB data set
+
+GlobalDefaults:
+  Nop: &Nop {Nop: true}
+
+  Database: &Database test
+  Collection: &Collection Collection0
+  Namespace: &Namespace test.Collection0
+
+Clients:
+  Default:
+    QueryOptions:
+      maxPoolSize: 500
+  Insert:
+    QueryOptions:
+      maxPoolSize: 500
+  Query:
+    QueryOptions:
+      maxPoolSize: 500
+  Remove:
+    QueryOptions:
+      maxPoolSize: 500
+  Update:
+    QueryOptions:
+      maxPoolSize: 500
+
+
+Actors:
+- Name: CreateShardedCollection
+  Type: AdminCommand
+  Threads: 1
+  Phases:
+  - Repeat: 1
+    Database: admin
+    Operations:
+    - OperationMetricsName: EnableSharding
+      OperationName: AdminCommand
+      OperationCommand:
+        enableSharding: *Database
+    - OperationMetricsName: ShardCollection
+      OperationName: AdminCommand
+      OperationCommand:
+        shardCollection: *Namespace
+        key: {shardKey: 1}
+  - *Nop
+  - *Nop
+  - *Nop
+
+- Name: LoadData
+  Type: Loader
+  Threads: 1
+  Phases:
+  - *Nop
+  - Repeat: 1
+    BatchSize: 10000
+    Threads: 1
+    DocumentCount: &NumDocs 10000000
+    Database: *Database
+    CollectionCount: 1    # Loader will populate 'Collection0'
+    Document:
+      str: {^RandomString: {length: 32}}
+      shardKey: {^RandomString: {length: 32}}
+  - *Nop
+  - *Nop
+
+- Name: ScatterGatherFind
+  Type: CrudActor
+  Threads: 32
+  Database: test
+  Phases:
+  - *Nop
+  - *Nop
+  - Name: NoShardKey
+    Duration: 5 minutes
+    Collection: Collection0
+    Operations:
+    - OperationName: find
+      OperationCommand:
+        Filter: {str: {^RandomString: {length: 32}}}
+  - *Nop
+
+- Name: IndexedFind
+  Type: CrudActor
+  Threads: 32
+  Database: test
+  Phases:
+  - *Nop
+  - *Nop
+  - *Nop
+  - Name: WithShardKey
+    Duration: 5 minutes
+    Collection: Collection0
+    Operations:
+    - OperationName: find
+      OperationCommand:
+        Filter: {shardKey: {^RandomString: {length: 32}}}
