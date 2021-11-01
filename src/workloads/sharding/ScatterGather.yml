@@ -1,17 +1,24 @@
 SchemaVersion: 2018-07-01
 Owner: "@mongodb/product-perf"
 Description: |
-  This workload compares performance of queries that use a shard key
-  and queries that do not use a shard key on a ~1GiB data set
+  This workload benchmarks various types of find queries on sharded clusters.
+  It measures performance of indexed lookups, shard key based lookups, and unindexed lookups.
 
 GlobalDefaults:
   Nop: &Nop {Nop: true}
-  MaxPhases: &MaxPhases 3
+  MaxPhases: &MaxPhases 6
   Database: &Database test
   Collection: &Collection Collection0
   Namespace: &Namespace test.Collection0
   Threads: &Threads 32
-  Duration: &Duration 10 seconds
+  NumDocs: &NumDocs 10000
+  Duration: &Duration 30 seconds
+  StringGenerator: &StringGenerator {^FastRandomString: {length: 24}}
+  TargetedStringGenerator: &TargetedStringGenerator
+    ^Join:
+      # Default alphabet starts with A, restrict all but the last character to target
+      # a very narrow range at the start of the keyspace
+      array: ["AAAAAAAAAAAAAAAAAAAAAAA", {^FastRandomString: {length: 1} }]
 
 Clients:
   Default:
@@ -64,13 +71,15 @@ Actors:
         Repeat: 1
         BatchSize: 10000
         Threads: 1
-        DocumentCount: &NumDocs 1000
+        DocumentCount: *NumDocs
         Database: *Database
         CollectionCount: 1    # Loader will populate 'Collection0'
+        Indexes:
+          - keys: {indexed: 1}
         Document:
-          unindexed: &RandomString {^RandomString: {length: 32}}
-          shardKey: *RandomString
-          indexed: *RandomString
+          unindexed: *StringGenerator
+          shardKey: *StringGenerator
+          indexed: *StringGenerator
 
 - Name: FindUnindexed
   Type: CrudActor
@@ -87,7 +96,7 @@ Actors:
         Operations:
           - OperationName: find
             OperationCommand:
-              Filter: {unindexed: *RandomString}
+              Filter: {unindexed: *StringGenerator}
 
 - Name: FindShardKey_AnyShard
   Type: CrudActor
@@ -104,7 +113,7 @@ Actors:
         Operations:
           - OperationName: find
             OperationCommand:
-              Filter: {shardKey: *RandomString}
+              Filter: {shardKey: *StringGenerator}
 
 - Name: FindShardKey_OneShard
   Type: CrudActor
@@ -112,7 +121,7 @@ Actors:
   Database: *Database
   Phases:
     OnlyActiveInPhases:
-      Active: [3]
+      Active: [5]
       NopInPhasesUpTo: *MaxPhases
       PhaseConfig:
         Name: ShardKey
@@ -121,8 +130,7 @@ Actors:
         Operations:
           - OperationName: find
             OperationCommand:
-              Filter: {shardKey: *RandomString}
-
+              Filter: {shardKey: *TargetedStringGenerator}
 
 - Name: FindIndexed
   Type: CrudActor
@@ -130,7 +138,7 @@ Actors:
   Database: *Database
   Phases:
     OnlyActiveInPhases:
-      Active: [4]
+      Active: [6]
       NopInPhasesUpTo: *MaxPhases
       PhaseConfig:
         Name: Indexed
@@ -139,4 +147,4 @@ Actors:
         Operations:
           - OperationName: find
             OperationCommand:
-              Filter: {indexed: *RandomString}
+              Filter: {indexed: *StringGenerator}
