@@ -6,10 +6,12 @@ Description: |
 
 GlobalDefaults:
   Nop: &Nop {Nop: true}
-
+  MaxPhases: &MaxPhases 3
   Database: &Database test
   Collection: &Collection Collection0
   Namespace: &Namespace test.Collection0
+  Threads: &Threads 32
+  Duration: &Duration 10 seconds
 
 Clients:
   Default:
@@ -34,67 +36,107 @@ Actors:
   Type: AdminCommand
   Threads: 1
   Phases:
-  - Repeat: 1
-    Database: admin
-    Operations:
-    - OperationMetricsName: EnableSharding
-      OperationName: AdminCommand
-      OperationCommand:
-        enableSharding: *Database
-    - OperationMetricsName: ShardCollection
-      OperationName: AdminCommand
-      OperationCommand:
-        shardCollection: *Namespace
-        key: {shardKey: 1}
-  - *Nop
-  - *Nop
-  - *Nop
+    OnlyActiveInPhases:
+      Active: [0]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Repeat: 1
+        Database: admin
+        Operations:
+        - OperationMetricsName: EnableSharding
+          OperationName: AdminCommand
+          OperationCommand:
+            enableSharding: *Database
+        - OperationMetricsName: ShardCollection
+          OperationName: AdminCommand
+          OperationCommand:
+            shardCollection: *Namespace
+            key: {shardKey: 1}
 
 - Name: LoadData
   Type: Loader
   Threads: 1
   Phases:
-  - *Nop
-  - Repeat: 1
-    BatchSize: 10000
-    Threads: 1
-    DocumentCount: &NumDocs 10000000
-    Database: *Database
-    CollectionCount: 1    # Loader will populate 'Collection0'
-    Document:
-      str: {^RandomString: {length: 32}}
-      shardKey: {^RandomString: {length: 32}}
-  - *Nop
-  - *Nop
+    OnlyActiveInPhases:
+      Active: [1]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Repeat: 1
+        BatchSize: 10000
+        Threads: 1
+        DocumentCount: &NumDocs 1000
+        Database: *Database
+        CollectionCount: 1    # Loader will populate 'Collection0'
+        Document:
+          unindexed: &RandomString {^RandomString: {length: 32}}
+          shardKey: *RandomString
+          indexed: *RandomString
 
-- Name: ScatterGatherFind
+- Name: FindUnindexed
   Type: CrudActor
-  Threads: 32
-  Database: test
+  Threads: *Threads
+  Database: *Database
   Phases:
-  - *Nop
-  - *Nop
-  - Name: NoShardKey
-    Duration: 5 minutes
-    Collection: Collection0
-    Operations:
-    - OperationName: find
-      OperationCommand:
-        Filter: {str: {^RandomString: {length: 32}}}
-  - *Nop
+    OnlyActiveInPhases:
+      Active: [2]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Name: Unindexed
+        Duration: *Duration
+        Collection: *Collection
+        Operations:
+          - OperationName: find
+            OperationCommand:
+              Filter: {unindexed: *RandomString}
 
-- Name: IndexedFind
+- Name: FindShardKey_AnyShard
   Type: CrudActor
-  Threads: 32
-  Database: test
+  Threads: *Threads
+  Database: *Database
   Phases:
-  - *Nop
-  - *Nop
-  - *Nop
-  - Name: WithShardKey
-    Duration: 5 minutes
-    Collection: Collection0
-    Operations:
-    - OperationName: find
-      OperationCommand:
-        Filter: {shardKey: {^RandomString: {length: 32}}}
+    OnlyActiveInPhases:
+      Active: [3]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Name: ShardKey
+        Duration: *Duration
+        Collection: *Collection
+        Operations:
+          - OperationName: find
+            OperationCommand:
+              Filter: {shardKey: *RandomString}
+
+- Name: FindShardKey_OneShard
+  Type: CrudActor
+  Threads: *Threads
+  Database: *Database
+  Phases:
+    OnlyActiveInPhases:
+      Active: [3]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Name: ShardKey
+        Duration: *Duration
+        Collection: *Collection
+        Operations:
+          - OperationName: find
+            OperationCommand:
+              Filter: {shardKey: *RandomString}
+
+
+- Name: FindIndexed
+  Type: CrudActor
+  Threads: *Threads
+  Database: *Database
+  Phases:
+    OnlyActiveInPhases:
+      Active: [4]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Name: Indexed
+        Duration: *Duration
+        Collection: *Collection
+        Operations:
+          - OperationName: find
+            OperationCommand:
+              Filter: {indexed: *RandomString}
