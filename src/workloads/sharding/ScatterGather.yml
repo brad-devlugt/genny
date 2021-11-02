@@ -11,31 +11,36 @@ GlobalDefaults:
   Collection: &Collection Collection0
   Namespace: &Namespace test.Collection0
   Threads: &Threads 32
-  NumDocs: &NumDocs 10000
-  Duration: &Duration 30 seconds
-  StringGenerator: &StringGenerator {^FastRandomString: {length: 24}}
+  NumDocs: &NumDocs 10000000
+  Duration: &Duration 5 minutes
+  StringGenerator: &StringGenerator {^FastRandomString: {length: 8}}
   TargetedStringGenerator: &TargetedStringGenerator
     ^Join:
       # Default alphabet starts with A, restrict all but the last character to target
       # a very narrow range at the start of the keyspace
-      array: ["AAAAAAAAAAAAAAAAAAAAAAA", {^FastRandomString: {length: 1} }]
+      array: ["AAAAAAA", {^FastRandomString: {length: 1} }]
 
 Clients:
   Default:
     QueryOptions:
       maxPoolSize: 500
+      socketTimeoutMS: 3600000
   Insert:
     QueryOptions:
       maxPoolSize: 500
+      socketTimeoutMS: 3600000
   Query:
     QueryOptions:
       maxPoolSize: 500
+      socketTimeoutMS: 3600000
   Remove:
     QueryOptions:
       maxPoolSize: 500
+      socketTimeoutMS: 3600000
   Update:
     QueryOptions:
       maxPoolSize: 500
+      socketTimeoutMS: 3600000
 
 
 Actors:
@@ -94,7 +99,7 @@ Actors:
         Duration: *Duration
         Collection: *Collection
         Operations:
-          - OperationName: find
+          - OperationName: findOne
             OperationCommand:
               Filter: {unindexed: *StringGenerator}
 
@@ -111,7 +116,7 @@ Actors:
         Duration: *Duration
         Collection: *Collection
         Operations:
-          - OperationName: find
+          - OperationName: findOne
             OperationCommand:
               Filter: {shardKey: *StringGenerator}
 
@@ -121,14 +126,14 @@ Actors:
   Database: *Database
   Phases:
     OnlyActiveInPhases:
-      Active: [5]
+      Active: [4]
       NopInPhasesUpTo: *MaxPhases
       PhaseConfig:
         Name: ShardKey
         Duration: *Duration
         Collection: *Collection
         Operations:
-          - OperationName: find
+          - OperationName: findOne
             OperationCommand:
               Filter: {shardKey: *TargetedStringGenerator}
 
@@ -138,13 +143,25 @@ Actors:
   Database: *Database
   Phases:
     OnlyActiveInPhases:
-      Active: [6]
+      Active: [5]
       NopInPhasesUpTo: *MaxPhases
       PhaseConfig:
         Name: Indexed
         Duration: *Duration
         Collection: *Collection
         Operations:
-          - OperationName: find
+          - OperationName: findOne
             OperationCommand:
               Filter: {indexed: *StringGenerator}
+
+# Guard Against timeout for no output.
+- Name: LoggingActor
+  Type: LoggingActor
+  Threads: 1
+  Phases:
+    OnlyActiveInPhases:
+      Active: [0, 1, 2, 3, 4, 5]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        LogEvery: 10 seconds
+        Blocking: None
