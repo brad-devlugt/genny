@@ -1,24 +1,45 @@
 SchemaVersion: 2018-07-01
 Owner: "@mongodb/product-perf"
 Description: |
-  This workload benchmarks various types of find queries on sharded clusters.
-  It measures performance of indexed lookups, shard key based lookups, and unindexed lookups.
+  This workload benchmarks various types of find queries on sharded clusters with an integer shard key.
+
+  The workload starts by pre-sharding the cluster into a known set of chunks, then
 
 GlobalDefaults:
   Nop: &Nop {Nop: true}
-  MaxPhases: &MaxPhases 6
+  MaxPhases: &MaxPhases 10
   Database: &Database test
   Collection: &Collection Collection0
   Namespace: &Namespace test.Collection0
   Threads: &Threads 32
-  NumDocs: &NumDocs 10000000
-  Duration: &Duration 5 minutes
-  StringGenerator: &StringGenerator {^FastRandomString: {length: 8}}
-  TargetedStringGenerator: &TargetedStringGenerator
-    ^Join:
-      # Default alphabet starts with A, restrict all but the last character to target
-      # a very narrow range at the start of the keyspace
-      array: ["AAAAAAA", {^FastRandomString: {length: 1} }]
+  NumDocs: &NumDocs 1000 #0
+
+  # The amount of time to run each query type
+  Duration: &Duration 30 seconds #5 minutes
+
+  # Setup for pre-sharding the cluster. The FirstChunkEnd is the
+  # last value of the first chunk. The chunk width is the number of integers
+  # that should fall into each chunk, and NumChunks is the overall number
+  # of chunks to generate
+  #
+  # MinKey() -> 100
+  # 100 -> 200
+  # 200 -> 300
+  # ...
+  # 9900 -> 10000
+  #
+  # ***When changing these, update the below generators so that the inserted documents
+  # produce even distribution of data across the chunks
+  NumChunks: &NumChunks 99
+  FirstChunkEnd: &FirstChunkEnd 100
+  ChunkWidth: &ChunkWidth 100
+
+  # max should be equal to NumChunks * ChunkWidth
+  # min should be the lowest number to insert into the first chunk
+  IntGenerator: &IntGenerator {^RandomInt: {min: 0, max: 10000}}
+
+  # This generator is meant to target one specific chunk on the cluster
+  TargetedIntGenerator: &TargetedIntGenerator {^RandomInt: {min: 9900, max: 10000}}
 
 Clients:
   Default:
@@ -65,12 +86,45 @@ Actors:
             shardCollection: *Namespace
             key: {shardKey: 1}
 
+- Name: PreShard
+  Type: AdminCommand
+  Threads: 1
+  Phases:
+    OnlyActiveInPhases:
+      Active: [1]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Repeat: *NumChunks
+        Database: admin
+        Operations:
+          - OperationMetricsName: SplitChunks
+            OperationName: AdminCommand
+            OperationCommand:
+              split: *Namespace
+              middle:
+                shardKey: { ^Inc: {start: *FirstChunkEnd, step: *ChunkWidth}}
+
+- Name: StopBalancer
+  Type: AdminCommand
+  Threads: 1
+  Phases:
+    OnlyActiveInPhases:
+      Active: [2]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Repeat: *NumChunks
+        Database: admin
+        Operations:
+          - OperationMetricsName: DisableBalancer
+            OperationName: AdminCommand
+            OperationCommand:
+              balancerStop: 1
 - Name: LoadData
   Type: Loader
   Threads: 1
   Phases:
     OnlyActiveInPhases:
-      Active: [1]
+      Active: [3]
       NopInPhasesUpTo: *MaxPhases
       PhaseConfig:
         Repeat: 1
@@ -82,45 +136,11 @@ Actors:
         Indexes:
           - keys: {indexed: 1}
         Document:
-          unindexed: *StringGenerator
-          shardKey: *StringGenerator
-          indexed: *StringGenerator
+          unindexed: *IntGenerator
+          shardKey: *IntGenerator
+          indexed: *IntGenerator
 
 - Name: FindUnindexed
-  Type: CrudActor
-  Threads: *Threads
-  Database: *Database
-  Phases:
-    OnlyActiveInPhases:
-      Active: [2]
-      NopInPhasesUpTo: *MaxPhases
-      PhaseConfig:
-        Name: Unindexed
-        Duration: *Duration
-        Collection: *Collection
-        Operations:
-          - OperationName: findOne
-            OperationCommand:
-              Filter: {unindexed: *StringGenerator}
-
-- Name: FindShardKey_AnyShard
-  Type: CrudActor
-  Threads: *Threads
-  Database: *Database
-  Phases:
-    OnlyActiveInPhases:
-      Active: [3]
-      NopInPhasesUpTo: *MaxPhases
-      PhaseConfig:
-        Name: ShardKey
-        Duration: *Duration
-        Collection: *Collection
-        Operations:
-          - OperationName: findOne
-            OperationCommand:
-              Filter: {shardKey: *StringGenerator}
-
-- Name: FindShardKey_OneShard
   Type: CrudActor
   Threads: *Threads
   Database: *Database
@@ -129,15 +149,15 @@ Actors:
       Active: [4]
       NopInPhasesUpTo: *MaxPhases
       PhaseConfig:
-        Name: ShardKey
+        Name: Unindexed
         Duration: *Duration
         Collection: *Collection
         Operations:
           - OperationName: findOne
             OperationCommand:
-              Filter: {shardKey: *TargetedStringGenerator}
+              Filter: {unindexed: *IntGenerator}
 
-- Name: FindIndexed
+- Name: FindShardKey_AnyShard
   Type: CrudActor
   Threads: *Threads
   Database: *Database
@@ -146,13 +166,47 @@ Actors:
       Active: [5]
       NopInPhasesUpTo: *MaxPhases
       PhaseConfig:
+        Name: ShardKey
+        Duration: *Duration
+        Collection: *Collection
+        Operations:
+          - OperationName: findOne
+            OperationCommand:
+              Filter: {shardKey: *IntGenerator}
+
+- Name: FindShardKey_OneShard
+  Type: CrudActor
+  Threads: *Threads
+  Database: *Database
+  Phases:
+    OnlyActiveInPhases:
+      Active: [6]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Name: ShardKey
+        Duration: *Duration
+        Collection: *Collection
+        Operations:
+          - OperationName: findOne
+            OperationCommand:
+              Filter: {shardKey: *TargetedIntGenerator}
+
+- Name: FindIndexed
+  Type: CrudActor
+  Threads: *Threads
+  Database: *Database
+  Phases:
+    OnlyActiveInPhases:
+      Active: [7]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
         Name: Indexed
         Duration: *Duration
         Collection: *Collection
         Operations:
           - OperationName: findOne
             OperationCommand:
-              Filter: {indexed: *StringGenerator}
+              Filter: {indexed: *IntGenerator}
 
 # Guard Against timeout for no output.
 - Name: LoggingActor
@@ -160,7 +214,7 @@ Actors:
   Threads: 1
   Phases:
     OnlyActiveInPhases:
-      Active: [0, 1, 2, 3, 4, 5]
+      Active: [0, 1, 2, 3, 4, 5, 6, 7]
       NopInPhasesUpTo: *MaxPhases
       PhaseConfig:
         LogEvery: 10 seconds

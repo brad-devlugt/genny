@@ -13,7 +13,7 @@ rm -rf dbs/
 
 echo "Starting backing mongod..."
 
-for i in {1..3}
+for i in {1..4}
 do
     datapath="dbs/data_${i}"
     logpath="dbs/logs_${i}"
@@ -39,7 +39,7 @@ mkdir -p dbs/mongos_logs
 mongos --configdb "config-replset/localhost:27000" --port 27015 --logpath ./dbs/mongos_logs/mongos.log --fork
 
 
-for i in {1..3}
+for i in {1..4}
 do
     shard_str="shard-replset-${i}/localhost:2700${i}"
     mongosh --eval "sh.addShard(\"${shard_str}\")" "mongodb://localhost:27015"
@@ -49,6 +49,5 @@ done
 
 ./run-genny translate ./build/WorkloadOutput/CedarMetrics/ -o ./build/WorkloadOutput/CedarMetrics/out.ftdc
 
-t2 ./build/WorkloadOutput/CedarMetrics/out.ftdc
+t2 ./build/WorkloadOutput/CedarMetrics/out.ftdc ./dbs/data_1/diagnostic.data ./dbs/data_2/diagnostic.data ./dbs/data_3/diagnostic.data ./dbs/data_4/diagnostic.data
 
-teardown
