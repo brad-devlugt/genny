@@ -1,0 +1,167 @@
+SchemaVersion: 2018-07-01
+Owner: "@mongodb/product-perf"
+Description: |
+  This workload benchmarks performance on sharded clusters with many collections
+
+GlobalDefaults:
+  Nop: &Nop {Nop: true}
+  MaxPhases: &MaxPhases 10
+  Database: &Database test
+  CollectionCount: &CollectionCount 30000
+
+  UpdateThreads: &UpdateThreads 32
+  QueryThreads: &QueryThreads 32
+  CollectionsToQuery: &CollectionsToQuery 30000
+  CollectionsToUpdate: &CollectionsToUpdate 30000
+
+  RequestDuration: &RequestDuration 20 minutes
+
+  DocumentCount: &DocumentCount 5000
+  DocumentStructure: &DocumentStructure
+    shardKey: &shardKeyGenerator {^RandomString: {length: 8}}
+
+    # Same document structure as BigUpdate, but with an extra field for the shard key
+    # TODO: can we share this between the workloads?
+    t: {^RandomInt: {min: 0, max: 10}}
+    w: {^RandomInt: {distribution: geometric, p: 0.1}}
+    x: 0
+    y: {^RandomInt: {min: 0, max: 1000}}
+    z: {^RandomInt: {min: 0, max: 2147483647}}  # This is for max int for low probability of conflicts
+    int0: &int {^RandomInt: {distribution: binomial, t: 200, p: 0.5}}
+    int1: *int
+    int2: *int
+    int3: *int
+    int4: *int
+    int5: *int
+    int6: *int
+    int7: *int
+    int8: *int
+    int9: *int
+    # Note -- genny does not support value generation within lists
+    # yet. https://jira.mongodb.org/browse/TIG-1245
+    intArray:
+    - 1000
+    - 2000
+    - 3000
+    - 4000
+    - 5000
+    - 6000
+    - 7000
+    - 8000
+    - 9000
+    string0: &string {^RandomString: {length: {^RandomInt: {min: 5, max: 15}}}}
+    string1: *string
+    string2: *string
+    string3: *string
+    string4: *string
+    string5: *string
+    string6: *string
+    string7: *string
+    string8: *string
+    string9: *string
+    stringShort: {^RandomString: {length: 1}}
+    stringLong: {^RandomString: {length: 100}}
+    compressibleStringArray:
+    - &cstring AAAAAAAAAAAAAAAAAAAA
+    - *cstring
+    - *cstring
+    - *cstring
+    - *cstring
+    - *cstring
+    - *cstring
+    - *cstring
+    - *cstring
+    - *cstring
+    some: {embedded: {document: {with: {some: {depth: *string}}}}}
+
+Clients:
+  Default:
+    QueryOptions:
+      maxPoolSize: 500
+      socketTimeoutMS: 3600000
+
+Actors:
+- Name: EnableSharding
+  Type: AdminCommand
+  Threads: 1
+  Phases:
+    OnlyActiveInPhases:
+      Active: [0]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Repeat: 1
+        Database: admin
+        Operations:
+          - OperationMetricsName: EnableSharding
+            OperationName: AdminCommand
+            OperationCommand:
+              enableSharding: *Database
+
+# This uses an incrementing generator to create many collections
+# that are sharded with the shard key "shardKey".
+- Name: CreateManyCollections
+  Type: AdminCommand
+  Threads: 1
+  Phases:
+    OnlyActiveInPhases:
+      Active: [1]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Repeat: *CollectionCount
+        Database: admin
+        Operations:
+          - OperationMetricsName: ShardCollection
+            OperationName: AdminCommand
+            OperationCommand:
+              shardCollection: {^FormatString: {format: "test.Collection%d", withArgs: [{^Inc: {start: 0}}]}}
+              key: {shardKey: 1}
+
+# Pre-load some data into the collections
+- Name: Loader
+  Type: Loader
+  Threads: 1
+  Phases:
+    OnlyActiveInPhases:
+      Active: [2]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Repeat: 1
+        Database: *Database
+        CollectionCount: *CollectionCount
+        Threads: 8
+        DocumentCount: *DocumentCount
+        BatchSize: 1000
+        Document: *DocumentStructure
+
+# Run updates and queries simultaneously against the cluster
+- Name: MultiCollectionUpdate
+  Type: MultiCollectionUpdate
+  Threads: 32
+  Phases:
+    OnlyActiveInPhases:
+      Active: [3]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Threads: *UpdateThreads
+        Duration: *RequestDuration
+        MetricsName: Update
+        # GlobalRate: 100 per 31 milliseconds
+        Database: *Database
+        CollectionCount: *CollectionsToUpdate
+        UpdateFilter: {shardKey: *shardKeyGenerator}
+        Update: {$inc: {x: 1}}
+- Name: MultiCollectionQuery
+  Type: MultiCollectionQuery
+  Threads: 32
+  Phases:
+    OnlyActiveInPhases:
+      Active: [3]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Threads: *QueryThreads
+        Duration: *RequestDuration
+        # GlobalRate: 100 per 9 milliseconds
+        Database: *Database
+        CollectionCount: *CollectionsToQuery
+        Filter: {shardKey: *shardKeyGenerator}
+        Limit: 20
