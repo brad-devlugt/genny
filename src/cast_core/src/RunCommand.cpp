@@ -162,10 +162,10 @@ public:
         auto command = _commandExpr();
         auto view = command.view();
 
-        if (!_options.isQuiet) {
-            BOOST_LOG_TRIVIAL(info) << " Running command: " << bsoncxx::to_json(view)
-                                    << " on database: " << _databaseName;
-        }
+        // if (!_options.isQuiet) {
+        //     BOOST_LOG_TRIVIAL(info) << " Running command: " << bsoncxx::to_json(view)
+        //                             << " on database: " << _databaseName;
+        // }
 
         // If we have an operation, then we have a watch
         std::optional<metrics::OperationContext> maybeWatch =
