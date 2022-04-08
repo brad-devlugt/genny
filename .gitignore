@@ -4,6 +4,9 @@
 .idea
 cmake-build-debug
 
+# vscode
+.vscode
+
 # vim
 [._]*.s[a-v][a-z]
 [._]*.sw[a-p]
