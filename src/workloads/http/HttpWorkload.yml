@@ -1,19 +1,23 @@
 SchemaVersion: 2018-07-01
 Owner: "@mongodb/product-perf"
-Description: Basic workload to test HTTP service
-Clients:
-  Default:
-    QueryOptions:
-      maxPoolSize: 20000
-  Update:
-    QueryOptions:
-      maxPoolSize: 100
+Description: Basic workload to test an HTTP service
 
+HttpClients:
+    URL: http://localhost:3000
 
 Actors:
 - Name: Http
   Type: HttpActor
   Threads: 1
   Phases:
-  - Repeat: 1
-    Threads: 1
+    - Duration: 10 seconds
+      Operation: POST
+      Route: /my/other/route
+      GlobalRate: 1 per 5 seconds
+      Body:
+        foo: a
+
+    - Duration: 20 seconds
+      Operation: GET
+      Route: /my/api/route
+      GlobalRate: 1 per 10 seconds

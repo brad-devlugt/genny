@@ -48,40 +48,14 @@ namespace genny::actor {
  * Owner: TODO (which github team owns this Actor?)
  */
 class HttpActor : public Actor {
-
-    //
-    // This generated Actor does a simple `collection.insert_one()` operation.
-    // You may need to add a few private fields to this header file, but most
-    // of the work is in the associated `HttpActor.cpp` file and its
-    // assocated `HttpActor_test.cpp` integration-test file.
-    //
-
 public:
-    //
-    // The ActorContext exposes the workload YAML as well as other
-    // collaborators. More details and examples are given in the
-    // .cpp file.
-    //
+
     explicit HttpActor(ActorContext& context);
+
     ~HttpActor() = default;
 
-    //
-    // Genny starts all Actor instances in their own threads and waits for all
-    // the `run()` methods to complete and that's "all there is".
-    //
-    // To help Actors coordinate, however, there is a built-in template-type
-    // called `genny::PhaseLoop`. All Actors that use `PhaseLoop` will be run
-    // in "lock-step" within Phases. It is recommended but not required to use
-    // PhaseLoop. See further explanation in the .cpp file.
-    //
     void run() override;
 
-    //
-    // This is how Genny knows that `Type: HttpActor` in workload YAMLs
-    // corresponds to this Actor class. It it also used by
-    // the `genny list-actors` command. Typically this should be the same as the
-    // class name.
-    //
     static std::string_view defaultName() {
         return "HttpActor";
     }
@@ -109,6 +83,8 @@ private:
     // discussed in the .cpp implementation.
     //
     genny::metrics::Operation _totalRequests;
+
+    std::string _url;
 
     //
     // The below struct and PhaseConfig are discussed in depth in the
