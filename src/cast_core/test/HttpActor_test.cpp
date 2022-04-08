@@ -69,7 +69,7 @@ TEST_CASE_METHOD(MongoTestFixture, "HttpActor successfully connects to a MongoDB
 
             auto count = db.collection("mycoll").count_documents(builder.view());
             // TODO: fixme
-            REQUIRE(count == 101);
+            REQUIRE(count == 102);
         } catch (const std::exception& e) {
             auto diagInfo = boost::diagnostic_information(e);
             INFO("CAUGHT " << diagInfo);

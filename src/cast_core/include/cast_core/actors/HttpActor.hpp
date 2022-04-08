@@ -108,7 +108,7 @@ private:
     // you can remove this from the class and put it in the `PhaseConfig` struct,
     // discussed in the .cpp implementation.
     //
-    genny::metrics::Operation _totalInserts;
+    genny::metrics::Operation _totalRequests;
 
     //
     // The below struct and PhaseConfig are discussed in depth in the

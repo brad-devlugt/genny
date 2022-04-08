@@ -31,6 +31,7 @@
 #include <gennylib/MongoException.hpp>
 #include <gennylib/context.hpp>
 
+#include <simple-beast-client/httpclient.hpp>
 #include <value_generators/DocumentGenerator.hpp>
 
 
@@ -153,84 +154,54 @@ struct HttpActor::PhaseConfig {
 // the `Actor.hpp` file.
 //
 void HttpActor::run() {
-    //
-    // The `config` variable is bound to the `PhaseConfig` that was
-    // constructed for the current Phase at setup time. This loop will automatically
-    // block, wait, and repeat at the right times to gracefully coordinate with other
-    // Actors so that all Actors start and end at the right time.
-    //
     for (auto&& config : _loop) {
-        //
-        // This inner loop is run according to the Phase configuration for this
-        // Actor. If you have `{Duration: 1 minute}` this loop will be run
-        // for one minute, etc. It also handles rate-limiting and error-handling
-        // as discussed below.
-        //
-        // The body of the below "inner" loop is where most of your logic should start.
-        // Alternatively you may decide to put some logic in your `PhaseConfig` type
-        // similarly to what the `CrudActor` does. If your Actor is simple and
-        // only supports a single type of operation, it is easiest to put your logic in
-        // the body of the below loop.
-        //
         for (const auto&& _ : config) {
-            //
-            // Evaluate the DocumentGenerator template:
-            //
-            auto document = config->documentExpr();
+           auto document = config->documentExpr();
 
-            //
-            // The clock starts running only when you call `.start()`. The returned object
-            // from this lets you record how many bytes, documents, and actual
-            // iterations (usually 1) your Actor completes while the clock is running. You then
-            // must stop the clock by calling either `.success()` if everything is okay
-            // or `.fail()` if there was a problem. It's undefined behavior what will
-            // happen if you don't stop the metrics clock (e.g. if there is an uncaught
-            // exception). See the full documentation on `OperationContext`.
-            //
-            // We don't care about how long the value-generator takes to run
-            // so we don't start the clock until after evaluating it. Purists
-            // would argue we even start until after we've done the below log
-            // statement. You decide.
-            //
-            auto inserts = _totalInserts.start();
+            auto requests = _totalRequests.start();
 
-            //
-            // You have the full power of boost logging which is rendered to stdout.
-            // Convention is to log generated documents and "normal" events at the
-            // debug level.
-            //
-            BOOST_LOG_TRIVIAL(debug) << " HttpActor Inserting "
-                                    << bsoncxx::to_json(document.view());
+            BOOST_LOG_TRIVIAL(debug)
+                << " SampleHttpClient Inserting " << bsoncxx::to_json(document.view());
 
-            //
-            // ⚠️ If your Actor throws any uncaught exceptions, the whole Workload will
-            // attempt to end as quickly as possible. Every time this inner loop loops
-            // around, it checks for any other Actors' exceptions and will stop iterating
-            // if it sees any. Such failed workloads are considered "programmer error"
-            // and will mark the workload task as a system-failure in Evergreen. ⚠️
-            //
-
-            //
-            // Actually do the logic.
-            //
-            // We expect that this insert operation may actually fail sometimes and we
-            // wouldn't consider this to be programmer-error (or a configuration-
-            // error) so we catch try/catch with the expected exception types.
-            //
             try {
+                boost::asio::io_context ioContext;
+                auto client = std::make_shared<simple_http::get_client>(
+                    ioContext,
+                    [](simple_http::empty_body_request& /*req*/,
+                       simple_http::string_body_response& resp) {
+                        // noop for successful HTTP
+                    });
 
-                config->collection.insert_one(document.view());
+                client->setFailHandler(
+                    [&requests](const simple_http::empty_body_request& /*req*/,
+                                const simple_http::string_body_response& /*resp*/,
+                                simple_http::fail_reason fr,
+                                boost::string_view message) {
+                        // TODO TIG-3843: this will always be triggered on macOS
+                        // with Failure code 2, Message: Error resolving
+                        // target: Host not found (authoritative)
+                        BOOST_LOG_TRIVIAL(warning) << "Failure code: " << fr << std::endl;
+                        BOOST_LOG_TRIVIAL(warning) << "Message: " << message << std::endl;
+                        requests.failure();
+                    });
 
-                inserts.addDocuments(1);
-                inserts.addBytes(document.view().length());
-                inserts.success();
-            } catch(mongocxx::operation_exception& e) {
-                inserts.failure();
+                // Run the GET request to httpbin.org
+                client->get(simple_http::url{
+                    "https://user:passwd@httpbin.org/digest-auth/auth/user/passwd/MD5/never"});
+
+                ioContext.run();  // blocks until requests are complete.
+
+                requests.success();
+            } catch (mongocxx::operation_exception& e) {
+                requests.failure();
                 //
                 // MongoException lets you include a "causing" bson document in the
                 // exception message for help debugging.
                 //
                 BOOST_THROW_EXCEPTION(MongoException(e, document.view()));
+            } catch (...) {
+                requests.failure();
+                throw std::current_exception();
             }
         }
     }
@@ -238,22 +209,11 @@ void HttpActor::run() {
 
 HttpActor::HttpActor(genny::ActorContext& context)
     : Actor{context},
-      _totalInserts{context.operation("Insert", HttpActor::id())},
+      _totalRequests{context.operation("Get", HttpActor::id())},
       _client{context.client()},
-      //
-      // Pass any additional constructor parameters that your `PhaseConfig` needs.
-      //
-      // The first argument passed in here is actually the `ActorContext` but the
-      // `PhaseLoop` reads the `PhaseContext`s from there and constructs one
-      // instance for each Phase.
-      //
       _loop{context, (*_client)[context["Database"].to<std::string>()], HttpActor::id()} {}
 
 namespace {
-//
-// This tells the "global" cast about our actor using the defaultName() method
-// in the header file.
-//
 auto registerHttpActor = Cast::registerDefault<HttpActor>();
 }  // namespace
 }  // namespace genny::actor
