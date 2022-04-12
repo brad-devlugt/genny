@@ -46,23 +46,30 @@ public:
 
 class PostOperation : public Operation {
 public:
-    PostOperation(PhaseContext& phaseContext) {
-
+    PostOperation(PhaseContext& phaseContext, ActorId id)
+        : _bodyGenerator{phaseContext["Body"].to<DocumentGenerator>(phaseContext, id)}
+    {
     }
 
     void run(simple_http::url endpoint) override {
         boost::asio::io_context ioContext;
+
+        // bsoncxx::document::value
+        auto postBody = _bodyGenerator();
+        auto json = bsoncxx::to_json(postBody.view());
+
         auto client = std::make_shared<simple_http::post_client>(
             ioContext,
             [](simple_http::string_body_request& /*req*/,
-                simple_http::string_body_response& resp) {});
+                simple_http::string_body_response& resp) {
+                    BOOST_LOG_TRIVIAL(info) <<"POST response: " << resp.body();
+                });
 
-        BOOST_LOG_TRIVIAL(info) << "Sending post to";
-
-        client->post(endpoint, "{\"foo\": \"bar\"}", "application/json");
-
+        client->post(endpoint, json, "application/json");
         ioContext.run();  // blocks until requests are complete.
     }
+private:
+    DocumentGenerator _bodyGenerator;
 };
 
 class GetOperation : public Operation {
@@ -77,6 +84,7 @@ public:
             [](simple_http::empty_body_request& /*req*/,
                 simple_http::string_body_response& resp) {
                 // noop for successful HTTP
+                BOOST_LOG_TRIVIAL(info) <<"GET response: " << resp.body();
             });
 
         client->get(endpoint);
@@ -87,7 +95,6 @@ public:
 struct HttpActor::PhaseConfig {
     std::string route;
     std::unique_ptr<Operation> operation;
-    // std::optional<DocumentGenerator> documentExpr;
     PhaseConfig(PhaseContext& phaseContext, ActorId id)
         : route{phaseContext["Route"].to<std::string>()}
         {
@@ -96,7 +103,7 @@ struct HttpActor::PhaseConfig {
                 operation = std::make_unique<GetOperation>();
             }
             else if (operationType == "POST") {
-                operation = std::make_unique<PostOperation>(phaseContext);
+                operation = std::make_unique<PostOperation>(phaseContext, id);
             }
         }
 };
@@ -108,21 +115,15 @@ struct HttpActor::PhaseConfig {
 //
 void HttpActor::run() {
     for (auto&& config : _loop) {
+        if (!config.isNop()) {
+            BOOST_LOG_TRIVIAL(info) << "Sending requests to " << _url << config->route;
+        }
         for (const auto&& _ : config) {
             auto requests = _totalRequests.start();
-            auto endpoint = _url + config->route;
-            BOOST_LOG_TRIVIAL(info) << "Sending requests to " << endpoint;
-
             try {
+                auto endpoint = _url + config->route;
                 config->operation->run(simple_http::url{endpoint});
                 requests.success();
-            } catch (mongocxx::operation_exception& e) {
-                requests.failure();
-                //
-                // MongoException lets you include a "causing" bson document in the
-                // exception message for help debugging.
-                //
-                // BOOST_THROW_EXCEPTION(MongoException(e, document.view()));
             } catch (...) {
                 requests.failure();
                 throw std::current_exception();

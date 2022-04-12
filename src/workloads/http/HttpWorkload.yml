@@ -6,18 +6,26 @@ HttpClients:
     URL: http://localhost:3000
 
 Actors:
-- Name: Http
+- Name: PostRequests
   Type: HttpActor
   Threads: 1
   Phases:
-    - Duration: 10 seconds
+    - #Duration: 10 seconds
+      Repeat: 2
       Operation: POST
       Route: /my/other/route
-      GlobalRate: 1 per 5 seconds
+      #GlobalRate: 1 per 2 seconds
       Body:
-        foo: a
+        foo: {^RandomInt: {min: 5, max: 15} }
+    - {Nop: true}
 
-    - Duration: 20 seconds
+- Name: GetRequests
+  Type: HttpActor
+  Threads: 1
+  Phases:
+    - {Nop: true}
+    - #Duration: 10 seconds
+      Repeat: 2
       Operation: GET
       Route: /my/api/route
-      GlobalRate: 1 per 10 seconds
+      #GlobalRate: 1 per 1 seconds
