@@ -17,15 +17,35 @@ Actors:
       #GlobalRate: 1 per 2 seconds
       Body:
         foo: {^RandomInt: {min: 5, max: 15} }
-    - {Nop: true}
+    - &Nop {Nop: true}
+    - *Nop
 
 - Name: GetRequests
   Type: HttpActor
   Threads: 1
   Phases:
-    - {Nop: true}
+    - *Nop
     - #Duration: 10 seconds
       Repeat: 2
       Operation: GET
       Route: /my/api/route
       #GlobalRate: 1 per 1 seconds
+    - *Nop
+
+- Name: PollTest
+  Type: HttpPoller
+  Threads: 1
+  Phases:
+    - *Nop
+    - *Nop
+    - Route: /my/api/route
+      Repeat: 1
+
+- Name: LoggingActor
+  Type: LoggingActor
+  Threads: 1
+  Phases:
+    - *Nop
+    - *Nop
+    - LogEvery: 1 second
+      Blocking: None
