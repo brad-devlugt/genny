@@ -81,23 +81,37 @@ protected:
 };
 }  // namespace
 
+namespace {
+/**
+ * This is used to reset any state in the memory generator, used for per-document generated values
+ */
+void ResetMemoryGenerator();
+}
+
 namespace genny {
+
 class DocumentGenerator::Impl : public Generator<bsoncxx::document::value> {
 public:
     using Entries = std::vector<std::pair<std::string, UniqueAppendable>>;
 
-    explicit Impl(Entries entries) : _entries{std::move(entries)} {}
+    Impl(Entries entries, bool nested = false) : _entries{std::move(entries)}, _nested{nested} {}
 
     bsoncxx::document::value evaluate() override {
         bsoncxx::builder::basic::document builder;
         for (auto&& [k, app] : _entries) {
             app->append(k, builder);
         }
+        if(!_nested) {
+            ResetMemoryGenerator();
+        }
         return builder.extract();
     }
 
 private:
     Entries _entries;
+    // TODO: Temporary solution for handling nested document generators for arrays. Needs
+    // to be revisited
+    bool _nested;
 };
 }  // namespace genny
 
@@ -177,11 +191,13 @@ UniqueGenerator<int64_t> dateGenerator(const Node& node,
 template <bool Verbatim, typename Out>
 Out valueGenerator(const Node& node,
                    GeneratorArgs generatorArgs,
-                   const std::map<std::string, Parser<Out>>& parsers);
+                   const std::map<std::string, Parser<Out>>& parsers,
+                   bool nested = false);
 
 template <bool Verbatim>
 std::unique_ptr<DocumentGenerator::Impl> documentGenerator(const Node& node,
-                                                           GeneratorArgs generatorArgs);
+                                                           GeneratorArgs generatorArgs,
+                                                           bool nested = false);
 
 template <bool Verbatim>
 UniqueGenerator<bsoncxx::array::value> literalArrayGenerator(const Node& node,
@@ -464,6 +480,7 @@ protected:
     std::vector<int64_t> _weights;
 };
 
+
 // This is a a more specific version of ChooseGenerator that produces strings. It is only used
 // within the JoinGenerator.
 class ChooseStringGenerator : public Generator<std::string> {
@@ -488,6 +505,7 @@ public:
         }
     }
     std::string evaluate() override {
+
         // Pick a random number between 0 and sum(weights)
         // Pick value based on that.
         auto distribution = boost::random::discrete_distribution(_weights);
@@ -924,6 +942,47 @@ private:
     const UniqueGenerator<int64_t> _maxGen;
 };
 
+class MemorizeGenerator : public Generator<std::string> {
+
+public:
+    MemorizeGenerator(const Node& node,
+                   GeneratorArgs generatorArgs)
+        : _generator{stringGenerator(extract(node, "fromGenerator", "^Memorize"), generatorArgs)},
+          _name{extract(node, "name", "^Memorize").to<std::string>()}
+    {
+    }
+
+    std::string evaluate() override {
+        auto value = _memory.find(_name);
+
+        if(value == _memory.end()) {
+            std::string generated_value = _generator->evaluate();
+            _memory.insert(std::make_pair(_name, generated_value));
+            return generated_value;
+        }
+
+        return value->second;
+    };
+
+    static void Reset() {
+        _memory.clear();
+    }
+
+private:
+    // Thread local creates this for every thread. Since document generation is
+    // single-threaded, this automatically handles different actors, threads, etc.
+    // generating at the same time
+    static thread_local std::unordered_map<std::string, std::string> _memory;
+    std::string _name;
+    UniqueGenerator<std::string> _generator;
+};
+
+void ResetMemoryGenerator() {
+    MemorizeGenerator::Reset();
+}
+
+thread_local std::unordered_map<std::string, std::string> MemorizeGenerator::_memory = {};
+
 class CycleGenerator : public Appendable {
 
 public:
@@ -986,7 +1045,7 @@ public:
         : _rng{generatorArgs.rng},
           _node{node},
           _generatorArgs{generatorArgs},
-          _valueGen{valueGenerator<false, UniqueAppendable>(node["of"], generatorArgs, parsers)},
+          _valueGen{valueGenerator<false, UniqueAppendable>(node["of"], generatorArgs, parsers, true)},
           _nTimesGen{intGenerator(extract(node, "number", "^Array"), generatorArgs)} {}
 
     bsoncxx::array::value evaluate() override {
@@ -1158,7 +1217,8 @@ std::optional<std::pair<Parser<O>, std::string>> extractKnownParser(
 template <bool Verbatim, typename Out>
 Out valueGenerator(const Node& node,
                    GeneratorArgs generatorArgs,
-                   const std::map<std::string, Parser<Out>>& parsers) {
+                   const std::map<std::string, Parser<Out>>& parsers,
+                   bool nested) {
     if constexpr (!Verbatim) {
         if (auto parserPair = extractKnownParser(node, generatorArgs, parsers)) {
             // known parser type
@@ -1195,7 +1255,7 @@ Out valueGenerator(const Node& node,
         return literalArrayGenerator<Verbatim>(node, generatorArgs);
     }
     if (node.isMap()) {
-        return documentGenerator<Verbatim>(node, generatorArgs);
+        return documentGenerator<Verbatim>(node, generatorArgs, nested);
     }
 
     std::stringstream msg;
@@ -1227,6 +1287,10 @@ const static std::map<std::string, Parser<UniqueAppendable>> allParsers{
     {"^Choose",
      [](const Node& node, GeneratorArgs generatorArgs) {
          return std::make_unique<ChooseGenerator>(node, generatorArgs);
+     }},
+    {"^Memorize",
+     [](const Node& node, GeneratorArgs generatorArgs) {
+         return std::make_unique<MemorizeGenerator>(node, generatorArgs);
      }},
     {"^IP",
      [](const Node& node, GeneratorArgs generatorArgs) {
@@ -1292,7 +1356,8 @@ const static std::map<std::string, Parser<UniqueAppendable>> allParsers{
  */
 template <bool Verbatim>
 std::unique_ptr<DocumentGenerator::Impl> documentGenerator(const Node& node,
-                                                           GeneratorArgs generatorArgs) {
+                                                           GeneratorArgs generatorArgs,
+                                                           bool nested) {
     if (!node.isMap()) {
         std::ostringstream stm;
         stm << "Node " << node << " must be mapping type";
@@ -1506,6 +1571,10 @@ UniqueGenerator<std::string> stringGenerator(const Node& node, GeneratorArgs gen
         {"^Choose",
          [](const Node& node, GeneratorArgs generatorArgs) {
              return std::make_unique<ChooseStringGenerator>(node, generatorArgs);
+         }},
+        {"^Memorize",
+         [](const Node& node, GeneratorArgs generatorArgs) {
+             return std::make_unique<MemorizeGenerator>(node, generatorArgs);
          }},
         {"^IP",
          [](const Node& node, GeneratorArgs generatorArgs) {

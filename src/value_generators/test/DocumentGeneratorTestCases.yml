@@ -561,7 +561,7 @@ Tests:
     GivenTemplate:
       a: {^Concat: {arrays: [{^Array: {of: 1, number: 1}}, {^Array: {of: 2, number: 2}}]}}
     ThenReturns:
-    - a: [1, 2, 2] 
+    - a: [1, 2, 2]
 
   - Name: Concat with generator and literal
     GivenTemplate:
@@ -1124,3 +1124,40 @@ Tests:
     ThenExecuteAndIgnore: true
     # The actual Value will be something like the following
     #   { "a" : { "$oid" : "61159412db9cbf4eec5d2061" } }
+
+  - Name: Memorize
+    GivenTemplate:
+      Field1: &MemorizeA
+        ^Memorize:
+          name: A
+          fromGenerator:
+            ^Choose:
+              from: [a, b, c]
+      Field2: *MemorizeA
+      Field3: &MemorizeB
+        ^Memorize:
+          name: B
+          fromGenerator:
+            ^Choose:
+              from: [d, e, f]
+      Field4: *MemorizeB
+      Field5: *MemorizeB
+      Field6:
+        ^Array:
+          of:
+            field:
+              field: *MemorizeB
+          number: 3
+    ThenReturns:
+      - Field1: a
+        Field2: a
+        Field3: d
+        Field4: d
+        Field5: d
+        Field6:
+          - field:
+              field: d
+          - field:
+              field: d
+          - field:
+              field: d
