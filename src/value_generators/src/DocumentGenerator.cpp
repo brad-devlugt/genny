@@ -109,8 +109,6 @@ public:
 
 private:
     Entries _entries;
-    // TODO: Temporary solution for handling nested document generators for arrays. Needs
-    // to be revisited
     bool _nested;
 };
 }  // namespace genny
@@ -201,7 +199,8 @@ std::unique_ptr<DocumentGenerator::Impl> documentGenerator(const Node& node,
 
 template <bool Verbatim>
 UniqueGenerator<bsoncxx::array::value> literalArrayGenerator(const Node& node,
-                                                             GeneratorArgs generatorArgs);
+                                                             GeneratorArgs generatorArgs,
+                                                             bool nested = false);
 
 UniqueGenerator<bsoncxx::array::value> bsonArrayGenerator(const Node& node,
                                                           GeneratorArgs generatorArgs);
@@ -954,7 +953,6 @@ public:
 
     std::string evaluate() override {
         auto value = _memory.find(_name);
-
         if(value == _memory.end()) {
             std::string generated_value = _generator->evaluate();
             _memory.insert(std::make_pair(_name, generated_value));
@@ -969,7 +967,7 @@ public:
     }
 
 private:
-    // Thread local creates this for every thread. Since document generation is
+    // Thread local creates this for every thread. Since document storage is
     // single-threaded, this automatically handles different actors, threads, etc.
     // generating at the same time
     static thread_local std::unordered_map<std::string, std::string> _memory;
@@ -1252,10 +1250,10 @@ Out valueGenerator(const Node& node,
         return std::make_unique<ConstantAppender<std::string>>(node.to<std::string>());
     }
     if (node.isSequence()) {
-        return literalArrayGenerator<Verbatim>(node, generatorArgs);
+        return literalArrayGenerator<Verbatim>(node, generatorArgs, true);
     }
     if (node.isMap()) {
-        return documentGenerator<Verbatim>(node, generatorArgs, nested);
+        return documentGenerator<Verbatim>(node, generatorArgs, true);
     }
 
     std::stringstream msg;
@@ -1367,7 +1365,7 @@ std::unique_ptr<DocumentGenerator::Impl> documentGenerator(const Node& node,
         auto meta = getMetaKey(node);
         if (meta) {
             if (meta == "^Verbatim") {
-                return documentGenerator<true>(node["^Verbatim"], generatorArgs);
+                return documentGenerator<true>(node["^Verbatim"], generatorArgs, nested);
             }
             std::stringstream msg;
             msg << "Invalid meta-key " << *meta << " at top-level";
@@ -1378,10 +1376,10 @@ std::unique_ptr<DocumentGenerator::Impl> documentGenerator(const Node& node,
     DocumentGenerator::Impl::Entries entries;
     for (const auto&& [k, v] : node) {
         auto key = k.toString();
-        auto valgen = valueGenerator<Verbatim, UniqueAppendable>(v, generatorArgs, allParsers);
+        auto valgen = valueGenerator<Verbatim, UniqueAppendable>(v, generatorArgs, allParsers, nested);
         entries.emplace_back(key, std::move(valgen));
     }
-    return std::make_unique<DocumentGenerator::Impl>(std::move(entries));
+    return std::make_unique<DocumentGenerator::Impl>(std::move(entries), nested);
 }
 
 /**
@@ -1392,10 +1390,10 @@ std::unique_ptr<DocumentGenerator::Impl> documentGenerator(const Node& node,
  */
 template <bool Verbatim>
 UniqueGenerator<bsoncxx::array::value> literalArrayGenerator(const Node& node,
-                                                             GeneratorArgs generatorArgs) {
+                                                             GeneratorArgs generatorArgs, bool nested) {
     LiteralArrayGenerator::ValueType entries;
     for (const auto&& [k, v] : node) {
-        auto valgen = valueGenerator<Verbatim, UniqueAppendable>(v, generatorArgs, allParsers);
+        auto valgen = valueGenerator<Verbatim, UniqueAppendable>(v, generatorArgs, allParsers, nested);
         entries.push_back(std::move(valgen));
     }
     return std::make_unique<LiteralArrayGenerator>(std::move(entries));

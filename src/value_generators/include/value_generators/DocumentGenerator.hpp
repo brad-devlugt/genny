@@ -55,6 +55,7 @@ public:
 struct GeneratorArgs {
     DefaultRandom& rng;
     ActorId actorId;
+    bool nested = false;
 };
 
 
