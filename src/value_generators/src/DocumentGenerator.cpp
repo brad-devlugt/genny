@@ -550,6 +550,36 @@ protected:
     uint32_t _prefix;
 };
 
+// This generator writes any value it generates into a file.
+// This can be useful to save lists of important information
+// for writing query workloads on large datasets or for debugging
+class ToFileGenerator : public Generator<std::string> {
+public:
+    ToFileGenerator(const Node& node,
+                   GeneratorArgs generatorArgs)
+        : _generator{stringGenerator(extract(node, "fromGenerator", "^ToFile"), generatorArgs)} {
+        std::stringstream ss;
+        ss << "./"
+            << extract(node, "to", "^ToFile").to<std::string>()
+            << "-"
+            << generatorArgs.actorId;
+        _file = std::ofstream(ss.str());
+    }
+
+    ~ToFileGenerator() {
+        _file.close();
+    }
+
+    std::string evaluate() override {
+        auto value = _generator->evaluate();
+        _file << value <<std::endl;
+        return value;
+    };
+
+private:
+    UniqueGenerator<std::string> _generator;
+    std::ofstream _file;
+};
 
 // Currently can only join stringGenerators. Ideally any generator would be able to be
 // transformed into a string. To work around this there is a ChooseStringGenerator in addition to
@@ -1290,6 +1320,10 @@ const static std::map<std::string, Parser<UniqueAppendable>> allParsers{
      [](const Node& node, GeneratorArgs generatorArgs) {
          return std::make_unique<MemorizeGenerator>(node, generatorArgs);
      }},
+    {"^ToFile",
+     [](const Node& node, GeneratorArgs generatorArgs) {
+         return std::make_unique<ToFileGenerator>(node, generatorArgs);
+     }},
     {"^IP",
      [](const Node& node, GeneratorArgs generatorArgs) {
          return std::make_unique<IPGenerator>(node, generatorArgs);
@@ -1574,6 +1608,10 @@ UniqueGenerator<std::string> stringGenerator(const Node& node, GeneratorArgs gen
          [](const Node& node, GeneratorArgs generatorArgs) {
              return std::make_unique<MemorizeGenerator>(node, generatorArgs);
          }},
+        {"^ToFile",
+         [](const Node& node, GeneratorArgs generatorArgs) {
+             return std::make_unique<ToFileGenerator>(node, generatorArgs);
+        }},
         {"^IP",
          [](const Node& node, GeneratorArgs generatorArgs) {
              return std::make_unique<IPGenerator>(node, generatorArgs);
